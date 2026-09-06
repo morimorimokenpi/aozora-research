@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/url"
+	"path"
 	"regexp"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -31,7 +34,6 @@ func findEntities(siteURL string) ([]Entity, error) {
 		}
 		pageURL := fmt.Sprintf("https://www.aozora.gr.jp/cards/%s/card%s.html", token[1], token[2])
 		author, zipURL := findAuthorAndZIP(pageURL)
-		println(zipURL)
 		println(elem.Text(), elem.AttrOr("href", ""))
 	})
 
@@ -39,13 +41,35 @@ func findEntities(siteURL string) ([]Entity, error) {
 }
 
 func findAuthorAndZIP(siteURL string) (string, string) {
+	log.Println("query", siteURL)
 	doc, err := goquery.NewDocument(siteURL)
 	if err != nil {
 		return "", ""
 	}
 
+	author := doc.Find("table[summary=作家データ] tr:nth-child(1) td:nth-child(2)").Text()
+
 	zipURL := ""
-	return zipURL
+	doc.Find("table download a").Each(func(n int, elem *goquery.Selection) {
+		href := elem.AttrOr("href", "")
+		if strings.HasSuffix(href, ".zip") {
+			zipURL = href
+		}
+	})
+
+	if zipURL == "" {
+		return author, ""
+	}
+	if strings.HasPrefix(zipURL, "http://") || strings.HasPrefix(zipURL, "https://") {
+		return author, zipURL
+	}
+
+	u, err := url.Parse(siteURL)
+	if err != nil {
+		return author, ""
+	}
+	u.Path = path.Join(path.Dir(u.Path), zipURL)
+	return author, u.String()
 }
 
 func main() {
