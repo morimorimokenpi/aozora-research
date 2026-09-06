@@ -1,14 +1,20 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"path"
 	"regexp"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/text/encoding/japanese"
 )
 
 type Entry struct {
@@ -36,7 +42,7 @@ func findEntries(siteURL string) ([]Entry, error) {
 		title := elem.Text()
 		pageURL := fmt.Sprintf("https://www.aozora.gr.jp/cards/%s/card%s.html", token[1], token[2])
 		author, zipURL := findAuthorAndZIP(pageURL)
-		if zipURL == "" {
+		if zipURL != "" {
 			entries = append(entries, Entry{
 				AuthorID: token[1],
 				Author:   author,
@@ -52,7 +58,6 @@ func findEntries(siteURL string) ([]Entry, error) {
 }
 
 func findAuthorAndZIP(siteURL string) (string, string) {
-	log.Println("query", siteURL)
 	doc, err := goquery.NewDocument(siteURL)
 	if err != nil {
 		return "", ""
@@ -83,6 +88,44 @@ func findAuthorAndZIP(siteURL string) (string, string) {
 	return author, u.String()
 }
 
+func extractText(zipURL string) (string, error) {
+	resp, err := http.Get(zipURL)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	r, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		return "", err
+	}
+
+	for _, file := range r.File {
+		if path.Ext(file.Name) == ".txt" {
+			f, err := file.Open()
+			if err != nil {
+				return "", err
+			}
+			b, err := io.ReadAll(f)
+			f.Close()
+			if err != nil {
+				return "", err
+			}
+			b, err = japanese.ShiftJIS.NewDecoder().Bytes(b)
+			if err != nil {
+				return "", err
+			}
+			return string(b), nil
+		}
+	}
+	return "", errors.New("contents not found")
+}
+
 func main() {
 	listURL := "https://www.aozora.gr.jp/index_pages/person879.html"
 
@@ -91,6 +134,12 @@ func main() {
 		log.Fatal(err)
 	}
 	for _, entry := range entries {
-		fmt.Println(entry.Title, entry.ZipURL)
+		content, err := extractText(entry.ZipURL)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		fmt.Println(entry.SiteURL)
+		fmt.Println(content)
 	}
 }
