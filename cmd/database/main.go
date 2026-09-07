@@ -2,10 +2,13 @@ package main
 
 import (
 	"database/sql"
-	"errors"
+	"fmt"
 	"log"
 	"os"
+	"strings"
 
+	"github.com/ikawaha/kagome-dict/ipa"
+	"github.com/ikawaha/kagome/v2/tokenizer"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/text/encoding/japanese"
 )
@@ -38,7 +41,12 @@ func main() {
 	}
 	content := string(b)
 
-	res, err := db.Exec(`INSERT INTO contents(author_id, title_id, title, content) values (?, ?, ?, ?)`,
+	res, err := db.Exec(`INSERT INTO authors(author_id, author) values(?, ?)`,
+		"000879",
+		"芥川竜之介",
+	)
+
+	res, err = db.Exec(`INSERT INTO contents(author_id, title_id, title, content) values (?, ?, ?, ?)`,
 		"000879",
 		"14",
 		"あばばばば",
@@ -48,4 +56,47 @@ func main() {
 		log.Fatal(err)
 	}
 	docID, err := res.LastInsertId()
+
+	t, err := tokenizer.New(ipa.Dict(), tokenizer.OmitBosEos())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	seg := t.Wakati(content)
+	_, err = db.Exec(`
+		INSERT INTO contents_fts(docid, words) values(?, ?)
+	`,
+		docID,
+		strings.Join(seg, " "),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	query := "虫 AND ココア"
+	rows, err := db.Query(`
+		SELECT
+			a.author,
+			c.title
+		FROM
+			contents c
+		INNER JOIN authors a
+			ON a.author_id = c.author_id
+		INNER JOIN contents_fts f
+			ON c.rowid = f.docid
+			AND words MATCH ?
+	`, query)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var author, title string
+		err = rows.Scan(&author, &title)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(author, title)
+	}
 }
